@@ -1,30 +1,15 @@
 from flask import Flask, request, jsonify
 from flasgger import Swagger
-from flask_cors import CORS          # ✅ new import
+from flask_cors import CORS
 import os
+from conversation_flow import Conversation   # 👈 new modular engine
 
 app = Flask(__name__)
-CORS(app)                            # ✅ enable CORS for all routes
-
-# Initialize Swagger UI
+CORS(app)                   # enable CORS for all routes
 swagger = Swagger(app)
 
-# Simple in‑memory session dictionary (resets when server restarts)
+# in‑memory session store (you can replace with DB later)
 sessions = {}
-
-
-# ---------- Helper Function ----------
-def estimate_price(project_type: str) -> int:
-    """Return an estimated starting price based on project type."""
-    project_type = project_type.lower()
-    if "website" in project_type:
-        return 800
-    if "app" in project_type:
-        return 2000
-    if "automation" in project_type or "bot" in project_type:
-        return 1000
-    return 1200
-
 
 # ---------- Chat Endpoint ----------
 @app.route("/chat", methods=["POST"])
@@ -53,7 +38,7 @@ def chat():
           properties:
             reply:
               type: string
-              example: "Hi there! I'm DuooBot 👋 What’s your name?"
+              example: "Hi there! I'm DuooBot 👋 What’s your name?"
             context:
               type: object
       400:
@@ -68,48 +53,23 @@ def chat():
     if not text:
         return jsonify({"reply": "Please send some text to chat with me!"}), 400
 
+    # one shared demo session (replace with user id or cookie later)
     session_id = "default_user"
-    context = sessions.get(session_id, {})
 
-    reply = "Hello! I'm DuooBot — your smart tech enquiry assistant 🤖"
+    # get previous conversation or start new
+    convo = sessions.get(session_id)
+    if not convo:
+        convo = Conversation()
 
-    # ---------- Rule‑Based Conversation Flow ----------
-    if not context.get("name"):
-        if text.lower() in ["hi", "hello", "hey"]:
-            reply = "Hi there! I'm DuooBot 👋 What’s your name?"
-        else:
-            context["name"] = text.title()
-            reply = (
-                f"Nice to meet you, {context['name']}! "
-                "What kind of project are you planning? (website, app, automation...)"
-            )
+    # generate reply + update state
+    reply = convo.reply(text)
+    sessions[session_id] = convo
 
-    elif not context.get("project"):
-        context["project"] = text
-        reply = f"Great — a {text}! Could you describe what features or goals you’d like it to have?"
-
-    elif not context.get("details"):
-        context["details"] = text
-        price = estimate_price(context["project"])
-        reply = (
-            f"Thanks! Based on what you described, the estimated starting price "
-            f"is about **${price}**.\n\n"
-            "Would you like our team to follow up by email or phone?"
-        )
-
-    else:
-        reply = (
-            "Fantastic! I've taken note of your enquiry 🎉 "
-            "Our DuooBitss team will reach out soon. Anything else before we wrap up?"
-        )
-
-    sessions[session_id] = context
-    return jsonify({"reply": reply, "context": context})
+    return jsonify({"reply": reply, "context": convo.state})
 
 
 # ---------- Run the App ----------
 if __name__ == "__main__":
-    # Render provides a dynamic PORT variable
     port = int(os.environ.get("PORT", 5000))
-    print(f"🚀 DuooBot server running on 0.0.0.0:{port} — Swagger available at /apidocs")
+    print(f"🚀 DuooBot running on 0.0.0.0:{port} — Swagger at /apidocs")
     app.run(host="0.0.0.0", port=port, debug=False)
