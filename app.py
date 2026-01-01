@@ -1,5 +1,6 @@
 from flask import Flask, request, jsonify
 from flasgger import Swagger
+import os
 
 app = Flask(__name__)
 
@@ -65,6 +66,7 @@ def chat():
     if not text:
         return jsonify({"reply": "Please send some text to chat with me!"}), 400
 
+    # We use a simple single-session store for demo purposes
     session_id = "default_user"
     context = sessions.get(session_id, {})
 
@@ -106,5 +108,8 @@ def chat():
 
 # ---------- Run the App ----------
 if __name__ == "__main__":
-    print("🚀 DuooBot server running... Swagger available at http://127.0.0.1:5000/apidocs")
-    app.run(debug=True)
+    # Render provides a dynamic PORT variable
+    port = int(os.environ.get("PORT", 5000))
+    print(f"🚀 DuooBot server running on 0.0.0.0:{port} — Swagger available at /apidocs")
+    # Listen on all interfaces so Render can detect the open port
+    app.run(host="0.0.0.0", port=port, debug=False)
