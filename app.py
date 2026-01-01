@@ -2,14 +2,15 @@ from flask import Flask, request, jsonify
 from flasgger import Swagger
 from flask_cors import CORS
 import os
-from conversation_flow import Conversation   # 👈 new modular engine
+from conversation_flow import Conversation  # modular conversation engine
 
 app = Flask(__name__)
-CORS(app)                   # enable CORS for all routes
+CORS(app)                                   # allow frontend access
 swagger = Swagger(app)
 
-# in‑memory session store (you can replace with DB later)
+# simple in‑memory session store (replace with DB later if needed)
 sessions = {}
+
 
 # ---------- Chat Endpoint ----------
 @app.route("/chat", methods=["POST"])
@@ -53,7 +54,7 @@ def chat():
     if not text:
         return jsonify({"reply": "Please send some text to chat with me!"}), 400
 
-    # one shared demo session (replace with user id or cookie later)
+    # for now, a single session; later you can use cookies or unique IDs
     session_id = "default_user"
 
     # get previous conversation or start new
@@ -61,7 +62,7 @@ def chat():
     if not convo:
         convo = Conversation()
 
-    # generate reply + update state
+    # generate reply + update context
     reply = convo.reply(text)
     sessions[session_id] = convo
 
@@ -71,5 +72,5 @@ def chat():
 # ---------- Run the App ----------
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
-    print(f"🚀 DuooBot running on 0.0.0.0:{port} — Swagger at /apidocs")
+    print(f"🚀 DuooBot running on 0.0.0.0:{port} — Swagger available at /apidocs")
     app.run(host="0.0.0.0", port=port, debug=False)
