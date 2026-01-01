@@ -1,8 +1,10 @@
 from flask import Flask, request, jsonify
 from flasgger import Swagger
+from flask_cors import CORS          # ✅ new import
 import os
 
 app = Flask(__name__)
+CORS(app)                            # ✅ enable CORS for all routes
 
 # Initialize Swagger UI
 swagger = Swagger(app)
@@ -66,7 +68,6 @@ def chat():
     if not text:
         return jsonify({"reply": "Please send some text to chat with me!"}), 400
 
-    # We use a simple single-session store for demo purposes
     session_id = "default_user"
     context = sessions.get(session_id, {})
 
@@ -111,5 +112,4 @@ if __name__ == "__main__":
     # Render provides a dynamic PORT variable
     port = int(os.environ.get("PORT", 5000))
     print(f"🚀 DuooBot server running on 0.0.0.0:{port} — Swagger available at /apidocs")
-    # Listen on all interfaces so Render can detect the open port
     app.run(host="0.0.0.0", port=port, debug=False)
