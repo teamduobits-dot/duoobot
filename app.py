@@ -2,17 +2,24 @@ from flask import Flask, request, jsonify
 from flasgger import Swagger
 from flask_cors import CORS
 import os
-from conversation_flow import Conversation   # your existing conversation engine
+from conversation_flow import Conversation   # import your existing conversation logic
 
+# -----------------------------------------------------------
+#  Flask application setup
+# -----------------------------------------------------------
 app = Flask(__name__)
-CORS(app)                                    # allow frontend access
+CORS(app)                      # allow frontend access
 swagger = Swagger(app)
 
-# In‑memory conversation store (simple + free‑tier friendly)
-# key = user.uid  or  "guest"
+# -----------------------------------------------------------
+#  In‑memory conversation store
+#  (key = Firebase UID or temporary guest key)
+# -----------------------------------------------------------
 sessions = {}
 
-# ---------- Chat Endpoint ----------
+# -----------------------------------------------------------
+#  Chat Endpoint
+# -----------------------------------------------------------
 @app.route("/chat", methods=["POST"])
 def chat():
     """
@@ -42,7 +49,6 @@ def chat():
           properties:
             reply:
               type: string
-              example: "Hi there! I'm DuooBot 👋 What’s your name?"
             context:
               type: object
       400:
@@ -55,30 +61,41 @@ def chat():
         return jsonify({"error": f"Invalid JSON data: {err}"}), 400
 
     text = (data.get("text") or "").strip()
-    user_uid = (data.get("uid") or "guest").strip()
+    user_uid = (data.get("uid") or "").strip()
 
     if not text:
         return jsonify({"reply": "Please send some text to chat with me!"}), 400
 
-    # Each UID gets its own independent Conversation instance
+    # If user not logged in, create a lightweight guest session ID
+    if not user_uid:
+        ip = request.remote_addr or "anon"
+        user_uid = f"guest_{ip}"
+
+    # Retrieve or create a unique conversation for this session ID
     convo = sessions.get(user_uid)
     if convo is None:
         convo = Conversation()
         sessions[user_uid] = convo
 
-    # Generate reply and update session
+    # Generate bot reply
     try:
         reply_text = convo.reply(text)
     except Exception as err:
-        print(f"❌ Conversation error for {user_uid}: {err}")
+        print(f"❌ Error in conversation for {user_uid}: {err}")
         reply_text = "⚠️ Sorry, something went wrong on the server."
 
-    sessions[user_uid] = convo  # update state
+    # Save updated conversation state
+    sessions[user_uid] = convo
 
-    return jsonify({"reply": reply_text, "context": convo.state})
+    return jsonify({
+        "reply": reply_text,
+        "context": convo.state,
+    })
 
 
-# ---------- Run the App ----------
+# -----------------------------------------------------------
+#  Run the App (local/dev entry)
+# -----------------------------------------------------------
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     print(f"🚀 DuooBot running on 0.0.0.0:{port} — Swagger UI: /apidocs")
