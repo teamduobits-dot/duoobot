@@ -18,7 +18,6 @@ swagger = Swagger(app)
 # -----------------------------------------------------------
 sessions = {}
 
-
 # -----------------------------------------------------------
 #  Chat Endpoint
 # -----------------------------------------------------------
@@ -80,21 +79,17 @@ def chat():
     # --- Retrieve or create conversation ----------------------
     convo = sessions.get(user_uid)
     if convo is None:
-        # Pass the display name (fetched from Google auth)
         convo = Conversation(user_name=display_name)
         sessions[user_uid] = convo
 
     # --- Generate bot reply -----------------------------------
     try:
         reply_payload = convo.reply(text)
-        # reply_payload can be string or dict; normalize
         if isinstance(reply_payload, str):
-            reply_payload = {"text": reply_payload}
+            reply_payload = {"text": reply_payload}  # normalize
     except Exception as err:
         print(f"❌  Error during conversation for {user_uid}: {err}")
-        reply_payload = {
-            "text": "⚠️ Sorry, something went wrong on the server."
-        }
+        reply_payload = {"text": "⚠️ Sorry, something went wrong on the server."}
 
     # --- Save conversation state ------------------------------
     sessions[user_uid] = convo
@@ -106,6 +101,45 @@ def chat():
         "user": user_uid
     })
 
+# -----------------------------------------------------------
+#  Reset conversation endpoint  (frontend calls this on deletion)
+# -----------------------------------------------------------
+@app.route("/reset", methods=["POST"])
+def reset_conversation():
+    """
+    Reset a user's current conversation state
+    ---
+    description: Clear any in-memory conversation for this user UID
+    consumes:
+      - application/json
+    parameters:
+      - in: body
+        name: body
+        required: true
+        schema:
+          type: object
+          properties:
+            uid:
+              type: string
+              example: "firebase_uid_abc123"
+    responses:
+      200:
+        description: Successful reset
+    """
+    try:
+        data = request.get_json(force=True)
+        user_uid = (data.get("uid") or "").strip()
+        if not user_uid:
+            return jsonify({"error": "Missing uid"}), 400
+
+        if user_uid in sessions:
+            del sessions[user_uid]
+            print(f"🗑️  Conversation reset for user: {user_uid}")
+
+        return jsonify({"status": "reset", "message": "Conversation cleared successfully"})
+    except Exception as err:
+        print(f"❌  Error during conversation reset: {err}")
+        return jsonify({"error": str(err)}), 500
 
 # -----------------------------------------------------------
 #  Domain Availability API (optional standalone use)
@@ -122,14 +156,12 @@ def domain_check():
     except Exception as err:
         return jsonify({"error": str(err)}), 500
 
-
 # -----------------------------------------------------------
 #  Health‑check endpoint (keeps Render happy)
 # -----------------------------------------------------------
 @app.route("/health", methods=["GET"])
 def health():
     return jsonify({"status": "ok"}), 200
-
 
 # -----------------------------------------------------------
 #  Run locally or on Render
