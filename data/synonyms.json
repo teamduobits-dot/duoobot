@@ -1,0 +1,8 @@
+{
+  "website": ["web", "site", "page", "portfolio", "shop"],
+  "app": ["application", "mobile", "android", "ios"],
+  "bot": ["assistant", "chat", "automation"],
+  "automation": ["script", "process"],
+  "yes": ["ok", "sure", "yep", "alright"],
+  "no": ["nope", "none", "nah"]
+}

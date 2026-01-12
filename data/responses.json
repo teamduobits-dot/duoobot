@@ -1,0 +1,17 @@
+{
+  "greetings": [
+    "Hi {name}! Ready to build something great?",
+    "Hey {name}, excited to start another project?",
+    "Hello {name}! Let’s design your next big idea."
+  ],
+  "errors": [
+    "Oops, didn’t catch that.",
+    "Hmm, that doesn’t sound clear.",
+    "Could you rephrase that please?"
+  ],
+  "thanks": [
+    "Perfect, got it!",
+    "Awesome choice!",
+    "Excellent!"
+  ]
+}
