@@ -7,6 +7,7 @@ from flask_cors import CORS
 import os
 import uuid
 import json
+import socket
 from conversation_flow import Conversation
 from database import SessionLocal
 from sqlalchemy import text as sql_text
@@ -57,7 +58,6 @@ load_state_from_file()
 # -----------------------------------------------------------
 def prune_sessions(limit=100):
     if len(sessions) > limit:
-        # discard oldest by history length heuristic
         sorted_uids = sorted(
             sessions.keys(),
             key=lambda u: len(sessions[u].state.get("history", [])),
@@ -125,9 +125,7 @@ def chat():
 # -----------------------------------------------------------
 @app.route("/reset", methods=["POST"])
 def reset_conversation():
-    """
-    Clears an in‑memory + cached conversation for a given UID
-    """
+    """Clears an in‑memory + cached conversation for a given UID"""
     try:
         data = request.get_json(force=True)
         user_uid = (data.get("uid") or "").strip()
@@ -148,19 +146,36 @@ def reset_conversation():
 
 
 # -----------------------------------------------------------
-#  Domain Availability API  (optional standalone use)
+#  Domain Availability API (local DNS‑based check)
 # -----------------------------------------------------------
 @app.route("/domaincheck", methods=["GET"])
 def domain_check():
-    name = (request.args.get("domain") or "").strip().lower()
-    if not name:
-        return jsonify({"error": "Missing ?domain=example.com"}), 400
-    try:
-        convo = Conversation()
-        available = convo.check_domain(name)
-        return jsonify({"domain": name, "available": available})
-    except Exception as err:
-        return jsonify({"error": str(err)}), 500
+    """
+    Free, unlimited domain availability checker using DNS lookups.
+    Example: /domaincheck?domain=duobits
+    Returns JSON with availability across common TLDs.
+    """
+    base = (request.args.get("domain") or "").strip().lower()
+    if not base:
+        return jsonify({"error": "Missing ?domain=example"}), 400
+
+    # Limit to a small list for faster responses
+    tlds = [".com", ".in", ".net", ".org", ".co"]
+    results = []
+
+    # Set short DNS timeout for faster responsiveness
+    socket.setdefaulttimeout(2)
+
+    for tld in tlds:
+        name = f"{base}{tld}"
+        try:
+            socket.gethostbyname(name)
+            available = False
+        except socket.gaierror:
+            available = True
+        results.append({"tld": tld, "domain": name, "available": available})
+
+    return jsonify({"base": base, "domains": results})
 
 
 # -----------------------------------------------------------
