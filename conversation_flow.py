@@ -5,179 +5,193 @@ from database import Lead, SessionLocal
 
 
 class Conversation:
-    def __init__(self, state=None):
-        # Conversation context (persisted between messages)
-        self.state = state or {"step": "greet"}
+    def __init__(self, state=None, user_name=None):
+        self.state = state or {"step": "project_type"}
+        # preload name from Google Auth
+        if user_name:
+            self.state["name"] = user_name.split(" ")[0]
 
     # ----------------------------------------------------------
-    # Generate reply based on current step and user message
+    # Generate reply; returns dict: {"text": str, "options": list}
     # ----------------------------------------------------------
     def reply(self, text: str):
-        step = self.state.get("step", "greet")
+        step = self.state.get("step", "project_type")
         text = text.strip()
         low = text.lower()
 
-        # ---------- Greeting ----------
-        if step == "greet":
-            self.state["step"] = "get_name"
-            return "👋 Hi! I'm DuooBot — your tech assistant at DuooBits. What's your name?"
+        # ---------- Step 1: Project Category ----------
+        if step == "project_type":
+            self.state["step"] = "subtype"
+            return {
+                "text": f"Hi {self.state.get('name','there')}! What kind of project do you need?",
+                "options": ["Website", "App", "Automation", "Bot"]
+            }
 
-        # ---------- Get Name ----------
-        elif step == "get_name":
-            self.state["name"] = text.title()
-            self.state["step"] = "project_type"
-            return (
-                f"Nice to meet you, {self.state['name']}! "
-                "What kind of project are you planning — landing page, full website, app, or automation?"
-            )
-
-        # ---------- Project Type ----------
-        elif step == "project_type":
+        # ---------- Step 2: Sub-Type ----------
+        elif step == "subtype":
             self.state["project"] = low
-            self.state["step"] = "budget"
-            return (
-                f"Great — a {self.state['project']} project! "
-                "What's your budget range (under ₹10 000 / ₹10 – 30 k / ₹30 k+)?"
-            )
+            if "web" in low:
+                self.state["step"] = "features"
+                return {
+                    "text": "Awesome! What kind of website are you looking for?",
+                    "options": ["Landing Page", "Portfolio", "E‑Commerce", "Other"]
+                }
+            elif "app" in low:
+                self.state["step"] = "features"
+                return {
+                    "text": "Great choice! Which features would you like in your app?",
+                    "options": ["Login", "Payments", "AI", "Dashboard"]
+                }
+            else:
+                self.state["step"] = "features"
+                return {
+                    "text": "Cool! Tell me which features matter most to you:",
+                    "options": ["Automation", "AI", "Integrations"]
+                }
 
-        # ---------- Budget ----------
+        # ---------- Step 3: Features ----------
+        elif step == "features":
+            # store multiple selections if given
+            feats = [f.strip().lower() for f in text.split(",")]
+            self.state["features"] = feats
+            self.state["contains_payment"] = any("payment" in f for f in feats)
+            self.state["step"] = "budget"
+            return {
+                "text": "What’s your planned budget range (₹)?",
+                "options": ["< 10 000", "10 – 30 k", "30 k +"]
+            }
+
+        # ---------- Step 4: Budget ----------
         elif step == "budget":
             self.state["budget"] = text
             self.state["step"] = "assets"
-            return (
-                "Do you already have a logo and social‑media accounts for your business (yes / no)?"
-            )
+            return {
+                "text": "Do you already have a logo and social media pages?",
+                "options": ["Yes", "No"]
+            }
 
-        # ---------- Assets (logo / social) ----------
+        # ---------- Step 5: Assets ----------
         elif step == "assets":
-            self.state["has_logo"] = not ("no" in low)
-            self.state["has_social"] = not ("no" in low)
-            self.state["step"] = "features"
-            return (
-                "Nice! Could you list main features you’d like (login, payments, AI, dashboard …)?"
-            )
-
-        # ---------- Feature List ----------
-        elif step == "features":
-            self.state["contains_payment"] = "payment" in low or "checkout" in low
-            self.state["details"] = text
+            no_ans = "no" in low
+            self.state["has_logo"] = not no_ans
+            self.state["has_social"] = not no_ans
             self.state["step"] = "timeline"
-            return "Got it 💡 Do you have a deadline or launch date in mind?"
+            return {
+                "text": "When do you want to launch?",
+                "options": ["1 – 2 Weeks", "1 Month", "Flexible"]
+            }
 
-        # ---------- Timeline / Deadline ----------
+        # ---------- Step 6: Timeline ----------
         elif step == "timeline":
-            self.state["urgent"] = any(k in low for k in ["week", "soon", "urgent"])
+            self.state["urgent"] = "week" in low
             self.state["step"] = "domain"
-            return (
-                "Almost done! Do you already own a domain name (yes / no)? "
-                "If not, I can check availability for you – please type a domain (e.g., duobits.in)"
-            )
+            return {
+                "text": "Do you already own a domain name (yes / no)? If not, type one to check (e.g., duobits.in)",
+                "options": []
+            }
 
-        # ---------- Domain name / Checker ----------
+        # ---------- Step 7: Domain ----------
         elif step == "domain":
             domain = low.replace(" ", "")
             self.state["domain_name"] = domain
             available = self.check_domain(domain)
             self.state["domain_available"] = available
             self.state["step"] = "quote"
-            status = "✅ available" if available else "❌ already taken"
-            return (
-                f"The domain ‘{domain}’ is {status}.\n"
-                f"{self.make_estimate_message()}\n\n"
-                "Would you like to share your contact email so we can follow up?"
-            )
+            yes_no = "✅ available" if available else "❌ taken"
+            return {
+                "text": f"The domain ‘{domain}’ is {yes_no}. Would you like to see the estimated cost?",
+                "options": ["Yes", "No"]
+            }
 
-        # ---------- Contact / Quote ----------
+        # ---------- Step 8: Show Quote ----------
         elif step == "quote":
-            self.state["contact"] = text
             self.state["step"] = "done"
 
-            # Save to the SQLite database
+            # save to database as a lead
             self.save_lead_to_db()
 
-            summary = self.project_summary()
-            return (
-                f"Perfect ✅ Thanks {self.state.get('name','there')}!\n"
-                f"{summary}\n"
-                "Our team will reach out soon.\n"
-                "Type 'hello' to start a new project 🚀"
-            )
+            cost = self.estimate_price_inr()
+            summary = self.project_summary(cost)
+            return {
+                "text": f"{summary}\n\n💸 Estimated cost ≈ ₹ {cost:,} (INR)\nOur team will reach out soon to {self.state.get('name','you')}!",
+                "options": ["Start New Project"]
+            }
 
-        # ---------- Conversation Done ----------
+        # ---------- Restart ----------
         elif step == "done":
-            if low in ["hi", "hello", "hey"]:
-                self.state = {"step": "get_name"}
-                return "👋 Welcome back! What's your name?"
-            return "If you’d like to describe a new project, just say ‘hello’. 🚀"
+            if "start" in low or "new" in low or "hello" in low:
+                self.state = {"step": "project_type", "name": self.state.get("name")}
+                return {
+                    "text": "Let's start a new project discussion!",
+                    "options": ["Website", "App", "Automation", "Bot"]
+                }
+            return {"text": "Type 'Start New Project' to begin again.", "options": []}
 
         # ---------- Fallback ----------
-        return "🤖 Sorry, I didn’t catch that — could you rephrase please?"
+        return {"text": "🤖 Sorry, I didn’t get that — please select an option above or type again.", "options": []}
 
     # ----------------------------------------------------------
-    # Domain checker (free, socket‑based)
+    # Domain checker (socket‑based)
     # ----------------------------------------------------------
     def check_domain(self, domain_name: str) -> bool:
         try:
             socket.gethostbyname(domain_name)
-            return False   # DNS exists → taken
+            return False  # DNS found → taken
         except socket.gaierror:
-            return True    # No DNS record → probably available
+            return True   # no DNS → probably available
 
     # ----------------------------------------------------------
-    # Estimate price in INR using simple rule table
+    # Price estimation (INR)
     # ----------------------------------------------------------
     def estimate_price_inr(self):
         proj = self.state.get("project", "")
+        sub = self.state.get("subtype", "")
         base_table = {
-            "landing": (3000, 5000),
-            "website": (8000, 15000),
-            "ecommerce": (18000, 35000),
-            "app": (40000, 80000),
-            "automation": (10000, 25000),
+            "landing": 4000,
+            "portfolio": 8000,
+            "e‑commerce": 25000,
+            "app": 50000,
+            "automation": 15000,
+            "bot": 12000,
+            "website": 10000,
         }
+        base = next((price for k, price in base_table.items() if k in proj or k in sub), 8000)
 
-        base = 8000
-        for key, rng in base_table.items():
-            if key in proj:
-                base = sum(rng) // 2
-
+        # feature adjustments
         addons = 0
+        feats = self.state.get("features", [])
+        for f in feats:
+            if "login" in f:
+                addons += 1500
+            if "payment" in f:
+                addons += 2500
+            if "ai" in f:
+                addons += 4000
+            if "dashboard" in f:
+                addons += 3000
+
         if not self.state.get("has_logo", True):
             addons += 2000
         if not self.state.get("has_social", True):
             addons += 1500
-        if self.state.get("contains_payment"):
-            addons += 2500
         if self.state.get("urgent"):
-            addons = int(addons * 1.15)
+            base = int(base * 1.1)
 
-        total = base + addons
-        return total
-
-    # ----------------------------------------------------------
-    # Construct readable estimate message
-    # ----------------------------------------------------------
-    def make_estimate_message(self):
-        total = self.estimate_price_inr()
-        return f"💸 Estimated cost ≈ ₹ {total:,} (INR)"
+        return base + addons
 
     # ----------------------------------------------------------
-    # Build a project summary line
+    # Project summary builder
     # ----------------------------------------------------------
-    def project_summary(self):
-        total = self.estimate_price_inr()
+    def project_summary(self, total):
         domain = self.state.get("domain_name")
-        domain_tag = ""
+        mark = ""
         if domain:
             mark = "✅" if self.state.get("domain_available") else "❌"
-            domain_tag = f" | Domain {mark} {domain}"
-        return (
-            f"📋 Summary: {self.state.get('project','project')} project"
-            f" ≈ ₹ {total:,} INR {domain_tag}"
-        )
+            domain = f" | Domain {mark} {domain}"
+        return f"📋 {self.state.get('name','Client')}, your {self.state.get('project','project')} project summary {domain}"
 
     # ----------------------------------------------------------
-    # Save the lead to SQLite database
+    # Save lead to SQLite
     # ----------------------------------------------------------
     def save_lead_to_db(self):
         try:
@@ -185,7 +199,7 @@ class Conversation:
             lead = Lead(
                 name=self.state.get("name"),
                 project=self.state.get("project"),
-                details=self.state.get("details"),
+                details=str(self.state.get("features")),
                 budget=self.state.get("budget"),
                 contact=self.state.get("contact"),
                 has_logo=self.state.get("has_logo"),
@@ -199,6 +213,6 @@ class Conversation:
             session.add(lead)
             session.commit()
         except Exception as err:
-            print(f"❌ Error saving lead: {err}")
+            print(f"❌ Error saving lead: {err}")
         finally:
             session.close()

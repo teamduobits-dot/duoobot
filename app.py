@@ -4,7 +4,7 @@ from flasgger import Swagger
 from flask_cors import CORS
 import os
 import uuid
-from conversation_flow import Conversation   # your upgraded class
+from conversation_flow import Conversation   # updated Conversation class
 
 # -----------------------------------------------------------
 #  Flask application setup
@@ -14,9 +14,10 @@ CORS(app)
 swagger = Swagger(app)
 
 # -----------------------------------------------------------
-#  In‑memory conversation store  (uid -> Conversation object)
+#  In‑memory conversation store  (uid → Conversation instance)
 # -----------------------------------------------------------
 sessions = {}
+
 
 # -----------------------------------------------------------
 #  Chat Endpoint
@@ -26,7 +27,8 @@ def chat():
     """
     Chat with DuooBot
     ---
-    description: Send a message to DuooBot and receive a friendly reply in INR estimates.
+    description: Send a message to DuooBot and receive a structured reply
+                 (text + optional button options).
     consumes:
       - application/json
     parameters:
@@ -38,24 +40,27 @@ def chat():
           properties:
             text:
               type: string
-              example: "Hello there!"
+              example: "E‑commerce website"
             uid:
               type: string
-              example: "user_123abc"
+              example: "firebase_uid_abc123"
+            displayName:
+              type: string
+              example: "Vishal Sharma"
     responses:
       200:
-        description: Successful bot reply
+        description: Bot reply payload
         schema:
           type: object
           properties:
             reply:
-              type: string
+              type: object
             context:
               type: object
       400:
-        description: Invalid input or missing text
+        description: Invalid input
     """
-    # --- Parse JSON safely -----------------------------------
+    # --- Parse and validate JSON -----------------------------
     try:
         data = request.get_json(force=True)
     except Exception as err:
@@ -63,38 +68,47 @@ def chat():
 
     text = (data.get("text") or "").strip()
     user_uid = (data.get("uid") or "").strip()
+    display_name = (data.get("displayName") or "").strip()
 
     if not text:
-        return jsonify({"reply": "Please send some text to chat with me!"}), 400
+        return jsonify({"reply": {"text": "Please send some text!"}}), 400
 
-    # --- Assign a safe guest ID if user not logged in --------
+    # --- Assign guest ID if needed ----------------------------
     if not user_uid:
         user_uid = f"guest_{uuid.uuid4().hex[:8]}"
 
-    # --- Retrieve or start new conversation ------------------
+    # --- Retrieve or create conversation ----------------------
     convo = sessions.get(user_uid)
     if convo is None:
-        convo = Conversation()
+        # Pass the display name (fetched from Google auth)
+        convo = Conversation(user_name=display_name)
         sessions[user_uid] = convo
 
-    # --- Generate bot reply ----------------------------------
+    # --- Generate bot reply -----------------------------------
     try:
-        reply_text = convo.reply(text)
+        reply_payload = convo.reply(text)
+        # reply_payload can be string or dict; normalize
+        if isinstance(reply_payload, str):
+            reply_payload = {"text": reply_payload}
     except Exception as err:
-        print(f"❌  Error for {user_uid}: {err}")
-        reply_text = "⚠️  Sorry, something went wrong on the server."
+        print(f"❌  Error during conversation for {user_uid}: {err}")
+        reply_payload = {
+            "text": "⚠️ Sorry, something went wrong on the server."
+        }
 
-    # --- Save updated state (conversation persists in memory) ---
+    # --- Save conversation state ------------------------------
     sessions[user_uid] = convo
 
+    # --- Return structured response ----------------------------
     return jsonify({
-        "reply": reply_text,
+        "reply": reply_payload,
         "context": convo.state,
         "user": user_uid
     })
 
+
 # -----------------------------------------------------------
-#  Optional: simple Domain Availability API
+#  Domain Availability API (optional standalone use)
 # -----------------------------------------------------------
 @app.route("/domaincheck", methods=["GET"])
 def domain_check():
@@ -108,12 +122,14 @@ def domain_check():
     except Exception as err:
         return jsonify({"error": str(err)}), 500
 
+
 # -----------------------------------------------------------
-#  Health‑check endpoint (for Render monitoring)
+#  Health‑check endpoint (keeps Render happy)
 # -----------------------------------------------------------
 @app.route("/health", methods=["GET"])
 def health():
     return jsonify({"status": "ok"}), 200
+
 
 # -----------------------------------------------------------
 #  Run locally or on Render
