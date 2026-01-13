@@ -1,5 +1,5 @@
 # ----------------------------------------------------------
-#  DuooBot — Conversational Logic v4 (context‑aware smart flow)
+#  DuooBot — Conversational Logic v5 (Deep Hierarchical Flow)
 # ----------------------------------------------------------
 import socket
 import re
@@ -49,19 +49,14 @@ def detect_yes_no(text):
 
 
 # ----------------------------------------------------------
-#  Conversational personality
+#  Personality text pools
 # ----------------------------------------------------------
 GREETINGS = [
     "Hi {name}! 👋 Excited to build something special together?",
     "Hey {name}! 🌟 Ready to bring your idea to life?",
     "Welcome {name}! 🚀 What shall we create today?",
 ]
-THANKS = [
-    "Perfect, that helps a lot!",
-    "Great choice!",
-    "Awesome 👍",
-    "Got it — thanks!",
-]
+THANKS = ["Perfect, that helps a lot!", "Great choice!", "Awesome 👍", "Got it — thanks!"]
 ERRORS = [
     "Hmm, could you rephrase that?",
     "I’m not sure I got that. Could you clarify?",
@@ -69,7 +64,60 @@ ERRORS = [
 ]
 
 # ----------------------------------------------------------
-#  Conversation Core (v4)
+#  Structured Question Bank (v5 Tree)
+# ----------------------------------------------------------
+QUESTION_TREE = {
+    "website": {
+        "landing": [
+            {"q": "What kind of landing page are you planning?", "options": ["Single Page", "Multi‑page", "Promo/Product"]},
+            {"q": "Do you need form integrations (lead collection)?", "options": ["Yes", "No"]},
+            {"q": "Goal of the page?", "options": ["Sales", "Newsletter", "Signup", "Event"]},
+        ],
+        "portfolio": [
+            {"q": "For business or personal brand?", "options": ["Business", "Personal", "Agency"]},
+            {"q": "Include a blog or case studies?", "options": ["Yes", "No"]},
+            {"q": "Upload new projects manually or via CMS?", "options": ["Manual", "CMS", "API"]},
+        ],
+        "e‑commerce": [
+            {"q": "Expected number of products?", "options": ["1‑50", "50‑500", "500+"]},
+            {"q": "Preferred payment gateway?", "options": ["Stripe", "Razorpay", "PayPal", "Other"]},
+            {"q": "Inventory management integration?", "options": ["Yes", "No"]},
+        ],
+        "corporate": [
+            {"q": "Internal employee/intranet portal needed?", "options": ["Yes", "No"]},
+            {"q": "Careers section with job posts?", "options": ["Yes", "No"]},
+            {"q": "Multi‑language support?", "options": ["Yes", "No"]},
+        ],
+    },
+    "app": [
+        {"q": "Which platforms are you targeting?", "options": ["Android", "iOS", "Web", "All"]},
+        {"q": "Who will use this app?", "options": ["Customers", "Staff", "Partners"]},
+        {"q": "Key features?", "options": ["Login", "Payments", "Notifications", "AI", "Dashboard"]},
+        {"q": "Need backend admin panel?", "options": ["Yes", "No"]},
+    ],
+    "automation": [
+        {"q": "What process do you want automated?", "options": ["Reports", "APIs", "Mailing", "Workflows", "Monitoring"]},
+        {"q": "Current tool or method used?", "options": ["Excel", "CRM", "ERP", "Manual"]},
+        {"q": "Goal of automation?", "options": ["Save time", "Reduce errors", "Integrate systems"]},
+        {"q": "Trigger frequency?", "options": ["Daily", "Weekly", "On demand"]},
+    ],
+    "bot": [
+        {"q": "What’s the primary purpose of this bot?", "options": ["Customer Support", "Lead Capture", "Internal FAQ", "Booking Assistant"]},
+        {"q": "Preferred tone/personality?", "options": ["Professional", "Friendly", "Playful"]},
+        {"q": "Where should it be deployed?", "options": ["Website", "WhatsApp", "Telegram", "Slack"]},
+    ],
+}
+
+COMMON_FLOW = [
+    {"q": "Who is your target audience?", "options": []},
+    {"q": "What’s the main goal?", "options": ["Sales", "Leads", "Branding", "Automation"]},
+    {"q": "Do you already have a logo or branding assets?", "options": ["Yes", "No"]},
+    {"q": "When are you hoping to launch your project?", "options": ["1‑2 Weeks", "1 Month", "Flexible"]},
+    {"q": "Do you already own a domain name?", "options": ["Yes", "No"]},
+]
+
+# ----------------------------------------------------------
+#  Conversation Core
 # ----------------------------------------------------------
 class Conversation:
     def __init__(self, state=None, user_name=None):
@@ -94,147 +142,135 @@ class Conversation:
                 "options": ["Website", "App", "Automation", "Bot"],
             }
 
-        # 2️⃣ Project type
+        # 2️⃣ Project Selection
         elif step == "project_type":
-            cat = detect_category(low)
-            self.state["project"] = cat
-            self.state["step"] = "audience"
-            return {
-                "text": "Great! Could you tell me who this project is mainly for — your customers, internal team, or a specific market?",
-                "options": [],
-            }
-
-        # 3️⃣ Audience context
-        elif step == "audience":
-            self.state["audience"] = text
-            self.state["step"] = "goal"
-            return {
-                "text": "Good to know 👌 And what’s your main goal with this project — sales, leads, branding, or automation?",
-                "options": ["Sales", "Leads", "Branding", "Automation", "Other"],
-            }
-
-        # 4️⃣ Goal context
-        elif step == "goal":
-            self.state["goal"] = text
-            self.state["step"] = "features"
-
-            proj = self.state.get("project", "")
-            if proj == "website":
-                msg = "Nice! What type of website are you planning?"
-                opts = ["Landing Page", "Portfolio", "E‑Commerce", "Corporate"]
-            elif proj == "app":
-                msg = "Awesome! Which core features should your app include?"
-                opts = ["Login", "Payments", "AI", "Dashboard"]
-            elif proj == "bot":
-                msg = "Bots are fun 🤖 What should it do for your business?"
-                opts = ["Chat", "Automation", "Support", "Integration"]
-            elif proj == "automation":
-                msg = "Great! What processes do you want automated?"
-                opts = ["Reports", "APIs", "Workflows", "Data Entry"]
+            category = detect_category(low)
+            self.state["project"] = category
+            
+            if category == "website":
+                self.state["step"] = "website_subtype"
+                return {
+                    "text": "Nice! What type of website are you planning?",
+                    "options": ["Landing", "Portfolio", "E‑Commerce", "Corporate"]
+                }
+            elif category in ["app", "automation", "bot"]:
+                self.state["step"] = "category_questions"
+                self.state["q_index"] = 0
+                first_q = QUESTION_TREE[category][0]
+                return {"text": first_q["q"], "options": first_q["options"]}
             else:
-                msg = "Got it! Tell me the key features you need."
-                opts = ["Login", "Payments", "Dashboard", "AI"]
+                # fallback if unknown
+                return {"text": "Could you clarify? (Website, App, Automation, Bot)", "options": ["Website", "App", "Automation", "Bot"]}
 
-            return {"text": msg, "options": opts}
+        # 3️⃣ Website Subtype
+        elif step == "website_subtype":
+            # flexible mapping for subtype choice
+            sub = "landing"
+            if "landing" in low: sub = "landing"
+            elif "portfolio" in low: sub = "portfolio"
+            elif "commerce" in low: sub = "e‑commerce"
+            elif "corporate" in low: sub = "corporate"
+            
+            self.state["subtype"] = sub
+            self.state["step"] = "category_questions"
+            self.state["q_index"] = 0
+            
+            first_q = QUESTION_TREE["website"][sub][0]
+            return {"text": first_q["q"], "options": first_q["options"]}
 
-        # 5️⃣ Features
-        elif step == "features":
-            feats = [x.strip() for x in text.replace(" and ", ",").split(",") if x.strip()]
-            self.state["features"] = feats
-            self.state["contains_payment"] = any("payment" in f.lower() for f in feats)
-            self.state["step"] = "budget"
-            feat_list = ", ".join(feats) if feats else "none"
-            return {
-                "text": f"Got it 👌 Features: {feat_list}. What's your budget range (₹)?",
-                "options": ["< 10 000", "10 – 30 k", "30 k +"],
-            }
+        # 4️⃣ Category-Specific Questions Loop
+        elif step == "category_questions":
+            cat = self.state["project"]
+            sub = self.state.get("subtype")
+            idx = self.state.get("q_index", 0)
 
-        # 6️⃣ Budget (context aware)
-        elif step == "budget":
-            self.state["budget"] = text
-            self.state["step"] = "assets"
+            # Store answer
+            self.state[f"cat_q_{idx}"] = text
+            
+            next_idx = idx + 1
+            self.state["q_index"] = next_idx
 
-            budget_text = text.replace(" ", "").lower()
-            if "<" in budget_text or "10" in budget_text:
-                msg = "We'll focus on essential features to keep it efficient and cost‑friendly."
-            elif "30" in budget_text:
-                msg = "Nice, that gives flexibility to include quality design and smoother UX."
+            # Determine list of questions
+            if cat == "website":
+                q_list = QUESTION_TREE["website"][sub]
             else:
-                msg = "Perfect! We'll tailor high‑end performance and branding for you."
-            return {
-                "text": f"{msg}\nDo you already have a logo or other branding assets?",
-                "options": ["Yes", "No"],
-            }
+                q_list = QUESTION_TREE[cat]
 
-        # 7️⃣ Assets / Branding
-        elif step == "assets":
-            yn = detect_yes_no(low)
-            self.state["has_logo"] = yn == "yes"
-            self.state["has_social"] = self.state["has_logo"]
-            self.state["needs_design"] = yn == "no"
-            self.state["step"] = "timeline"
-            note = ""
-            if yn == "no":
-                note = "\nNo worries — our creative team can help design your logo too."
-            return {
-                "text": f"When are you hoping to launch your project?{note}",
-                "options": ["1‑2 Weeks", "1 Month", "Flexible"],
-            }
+            if next_idx < len(q_list):
+                nxt = q_list[next_idx]
+                return {"text": nxt["q"], "options": nxt["options"]}
+            
+            # Finished specific questions -> go to Common Flow
+            self.state["step"] = "common_questions"
+            self.state["c_index"] = 0
+            first_c = COMMON_FLOW[0]
+            return {"text": first_c["q"], "options": first_c["options"]}
 
-        # 8️⃣ Timeline
-        elif step == "timeline":
-            self.state["timeline"] = text
-            self.state["urgent"] = "week" in low or "soon" in low
-            self.state["step"] = "domain"
-            if self.state["urgent"]:
-                extra = "Got it 🚀 We'll treat this as a priority build."
-            else:
-                extra = "Perfect timing — we can plan a steady rollout."
-            return {
-                "text": f"{extra}\nDo you already own a domain name?",
-                "options": ["Yes", "No"],
-            }
+        # 5️⃣ Common Questions Loop
+        elif step == "common_questions":
+            c_idx = self.state.get("c_index", 0)
+            self.state[f"common_q_{c_idx}"] = text
+            
+            # Special check for "Domain" question (index 4 in COMMON_FLOW)
+            if c_idx == 4:
+                yn = detect_yes_no(low)
+                self.state["has_domain"] = yn == "yes"
+                if yn == "yes":
+                    self.state["step"] = "domain_input"
+                    return {"text": "Great! Please type your domain (e.g. mybrand.com)."}
+                else:
+                    self.state["step"] = "summary"
+                    return self.generate_final_summary()
 
-        # 9️⃣ Domain
-        elif step == "domain":
-            ans = detect_yes_no(low)
-            self.state["has_domain"] = ans == "yes"
+            self.state["c_index"] = c_idx + 1
+            next_c = c_idx + 1
+
+            if next_c < len(COMMON_FLOW):
+                nxt = COMMON_FLOW[next_c]
+                return {"text": nxt["q"], "options": nxt["options"]}
+            
+            # If loop finished naturally
             self.state["step"] = "summary"
-            if ans == "yes":
-                return {"text": "Great! Please type your domain (e.g. mybrand.com)."}
-            return {
-                "text": "No problem 🙂 We can help you choose one later. Ready to view your project summary?",
-                "options": ["Yes"],
-            }
+            return self.generate_final_summary()
 
-        # 🔟 Summary / Quote
+        # 6️⃣ Domain Input
+        elif step == "domain_input":
+            self.state["domain_name"] = text
+            self.state["step"] = "summary"
+            return self.generate_final_summary()
+
+        # 7️⃣ Summary
         elif step == "summary":
-            cost = self.estimate_price_inr()
-            summary = self.project_summary(cost)
-            self.save_lead_to_db()
-            self.state["step"] = "done"
-            return {
-                "text": (
-                    f"{summary}\n💸 Estimated cost ≈ ₹ {cost:,}\n"
-                    "Thanks for sharing such detailed info! "
-                    "Type 'Start New Project' to begin again."
-                ),
-                "options": ["Start New Project"],
-            }
+            pass 
 
-        # 🔁 Restart
-        elif step == "done":
-            if any(k in low for k in ("start", "new", "again", "hello")):
-                name = self.state.get("name")
-                self.state = {"step": "greeting", "name": name, "history": []}
-                return self.reply("hello")
-            return {"text": "Type 'Start New Project' to begin again 🎯"}
+        # 🔁 Restart Logic
+        if any(k in low for k in ("start", "new", "again", "hello")):
+            name = self.state.get("name")
+            self.state = {"step": "greeting", "name": name, "history": []}
+            return self.reply("hello")
 
-        # fallback safeguard
-        return {"text": random.choice(ERRORS), "options": []}
+        return {"text": "Type 'Start New Project' to begin again 🎯", "options": ["Start New Project"]}
 
     # ----------------------------------------------------------
-    # Utility helpers
+    #  Helper to generate summary
+    # ----------------------------------------------------------
+    def generate_final_summary(self):
+        cost = self.estimate_price_inr()
+        summary = self.project_summary(cost)
+        self.save_lead_to_db()
+        self.state["step"] = "done"
+        return {
+            "text": (
+                f"{summary}\n"
+                f"💸 Estimated cost ≈ ₹ {cost:,}\n"
+                "Thanks for sharing details! We'll be in touch.\n"
+                "Type 'Start New Project' to begin again."
+            ),
+            "options": ["Start New Project"]
+        }
+
+    # ----------------------------------------------------------
+    #  Utility: Domain Check
     # ----------------------------------------------------------
     def check_domain(self, domain_name: str) -> bool:
         try:
@@ -243,77 +279,69 @@ class Conversation:
         except socket.gaierror:
             return True
 
+    # ----------------------------------------------------------
+    #  Utility: Price Estimation
+    # ----------------------------------------------------------
     def estimate_price_inr(self):
         proj = self.state.get("project", "")
-        base_vals = {
-            "landing": 4000,
-            "portfolio": 8000,
-            "e‑commerce": 25000,
-            "website": 10000,
-            "app": 50000,
-            "automation": 15000,
-            "bot": 12000,
-        }
-        base = next((p for k, p in base_vals.items() if k in proj), 8000)
-
-        feats = self.state.get("features", [])
+        base = 8000
+        # Simple base pricing
+        if proj == "app": base = 50000
+        elif proj == "bot": base = 12000
+        elif proj == "automation": base = 15000
+        elif "e‑commerce" in str(self.state.get("subtype","")): base = 25000
+        elif "landing" in str(self.state.get("subtype","")): base = 4000
+        
+        # Additive logic based on keywords in history
+        history_str = str(self.state).lower()
         addons = 0
-        for f in feats:
-            f = f.lower()
-            if "login" in f:
-                addons += 1500
-            if "payment" in f:
-                addons += 2500
-            if "ai" in f:
-                addons += 4000
-            if "dashboard" in f:
-                addons += 3000
-        if not self.state.get("has_logo", True):
-            addons += 2000
-        if not self.state.get("has_social", True):
-            addons += 1500
-        if self.state.get("urgent"):
-            base = int(base * 1.1)
+        if "login" in history_str: addons += 1500
+        if "payment" in history_str: addons += 2500
+        if "ai" in history_str: addons += 4000
+        if "dashboard" in history_str: addons += 3000
+        if "cms" in history_str: addons += 5000
+        
+        # urgent? (checked in common questions)
+        urgent = "week" in str(self.state.get("common_q_3", "")).lower()
+        if urgent:
+            base = int(base * 1.15)
+
         return base + addons
 
+    # ----------------------------------------------------------
+    #  Utility: Summary Text
+    # ----------------------------------------------------------
     def project_summary(self, total):
-        domain = self.state.get("domain_name") or self.state.get("domain_base")
-        tag = ""
-        if domain:
-            mark = "✅" if self.state.get("domain_available") else "❌"
-            tag = f" | Domain {mark} {domain}"
-        parts = []
-        if self.state.get("audience"):
-            parts.append(f"Audience: {self.state['audience']}")
-        if self.state.get("goal"):
-            parts.append(f"Goal: {self.state['goal']}")
-        if self.state.get("needs_design"):
-            parts.append("Includes logo/branding design")
-        context = "\n— ".join(parts)
+        domain = self.state.get("domain_name", "")
+        tag = f" | Domain: {domain}" if domain else ""
+        
+        proj_name = self.state.get("subtype") or self.state.get("project")
+        audience = self.state.get("common_q_0", "General")
+        goal = self.state.get("common_q_1", "General")
+        
         return (
-            f"📋 Summary for {self.state.get('name', 'Client')}: "
-            f"{self.state.get('project', 'project')} project ≈ ₹ {total:,} INR{tag}\n"
-            f"— {context if context else ''}"
+            f"📋 Summary for {self.state.get('name', 'Client')}:\n"
+            f"• Project: {str(proj_name).title()}\n"
+            f"• Target: {audience}\n"
+            f"• Goal: {goal}\n"
+            f"{tag}"
         )
 
+    # ----------------------------------------------------------
+    #  Utility: Save to DB
+    # ----------------------------------------------------------
     def save_lead_to_db(self):
         try:
             session = SessionLocal()
             lead = Lead(
                 name=self.state.get("name"),
                 project=self.state.get("project"),
-                details=str(self.state.get("features")),
-                budget=self.state.get("budget"),
+                details=str(self.state), # storing full state dump for deep context
+                budget=self.state.get("common_q_2"), # approximate mapping
                 contact=self.state.get("contact"),
-                has_logo=self.state.get("has_logo"),
-                has_social=self.state.get("has_social"),
-                contains_payment=self.state.get("contains_payment"),
-                urgent=self.state.get("urgent"),
-                domain_name=self.state.get("domain_name")
-                or self.state.get("domain_base"),
-                domain_available="yes"
-                if self.state.get("domain_available")
-                else "no",
+                has_logo="yes" in str(self.state.get("common_q_2","")).lower(),
+                urgent="week" in str(self.state.get("common_q_3","")).lower(),
+                domain_name=self.state.get("domain_name"),
                 estimated_cost=f"₹ {self.estimate_price_inr():,}",
             )
             session.add(lead)
