@@ -2,3 +2,4 @@ flask
 flasgger
 flask-cors
 sqlalchemy
+marshmallow
