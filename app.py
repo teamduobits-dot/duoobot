@@ -1,13 +1,12 @@
 # -----------------------------------------------------------
-#  DuooBot Backend — Smarter Local Edition (Render Free Tier)
+#  DuooBot Backend — Flasgger Inline‑Model Edition (Ultimate Fix)
 # -----------------------------------------------------------
 from flask import Flask, request, jsonify
 from flasgger import Swagger
+from marshmallow import Schema, fields
 from flask_cors import CORS
-import os
-import uuid
-import json
-import socket
+import os, uuid, json, socket
+
 from conversation_flow import Conversation
 from database import SessionLocal
 from sqlalchemy import text as sql_text
@@ -17,65 +16,90 @@ from sqlalchemy import text as sql_text
 # -----------------------------------------------------------
 app = Flask(__name__)
 CORS(app)
-swagger = Swagger(app)
+
+# --- Inline schema models (metadata keeps examples valid for Marshmallow) ---
+class ChatBody(Schema):
+    text = fields.Str(required=True, metadata={"example": "Build me a website"})
+    uid = fields.Str(required=False, metadata={"example": "demo123"})
+    displayName = fields.Str(required=False, metadata={"example": "Sandy"})
+
+class ResetBody(Schema):
+    uid = fields.Str(required=True, metadata={"example": "demo123"})
+
+class DomainBody(Schema):
+    domain = fields.Str(required=True, metadata={"example": "duobits"})
+    tlds = fields.List(fields.Str(), metadata={"example": [".com", ".in", ".net"]})
+
+# --- Force Flasgger to use explicit OpenAPI template (renders requestBody editor) ---
+swagger_template = {
+    "openapi": "3.0.0",
+    "info": {
+        "title": "DuooBot API Docs",
+        "version": "1.0.0",
+        "description": "Interactive Swagger UI for DuooBot endpoints"
+    },
+    "components": {
+        "schemas": {
+            "ChatBody": ChatBody().fields,
+            "ResetBody": ResetBody().fields,
+            "DomainBody": DomainBody().fields
+        }
+    }
+}
+app.config["SWAGGER"] = {"uiversion": 3, "openapi": "3.0.0"}
+swagger = Swagger(app, template=swagger_template)
 
 # -----------------------------------------------------------
-#  In‑memory store  +  lightweight SQLite persistence
+#  In‑memory store + lightweight SQLite persistence
 # -----------------------------------------------------------
 sessions = {}
-
-STATE_FILE = "convo_cache.json"  # quick backup between restarts
-
+STATE_FILE = "convo_cache.json"
 
 def save_state_to_file():
-    """Write minimal session state to disk (for Render restarts)."""
     try:
-        snap = {uid: c.state for uid, c in sessions.items()}
         with open(STATE_FILE, "w", encoding="utf-8") as f:
-            json.dump(snap, f)
+            json.dump({uid: c.state for uid, c in sessions.items()}, f)
     except Exception as err:
-        print(f"⚠️  Could not persist sessions: {err}")
-
+        print("⚠️ Could not persist sessions:", err)
 
 def load_state_from_file():
-    """Load any previous cached state snapshot."""
     if not os.path.exists(STATE_FILE):
         return
     try:
         with open(STATE_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
-            for uid, st in data.items():
-                sessions[uid] = Conversation(state=st)
-        print(f"♻️  Restored {len(sessions)} conversation states from cache.")
+        for uid, st in data.items():
+            sessions[uid] = Conversation(state=st)
+        print(f"♻️ Restored {len(sessions)} conversation states from cache.")
     except Exception as err:
-        print(f"⚠️  Failed to load cached state: {err}")
-
+        print("⚠️ Failed to load cached state:", err)
 
 load_state_from_file()
 
-# -----------------------------------------------------------
-#  Helper: prune inactive sessions (Render free memory)
-# -----------------------------------------------------------
 def prune_sessions(limit=100):
     if len(sessions) > limit:
-        sorted_uids = sorted(
-            sessions.keys(),
-            key=lambda u: len(sessions[u].state.get("history", [])),
-        )
-        for uid in sorted_uids[: len(sessions) - limit]:
+        for uid in list(sessions.keys())[: len(sessions) - limit]:
             del sessions[uid]
-        print(f"🧹  Pruned sessions to {limit} active users.")
-
+        print(f"🧹 Pruned sessions to {limit} active users.")
 
 # -----------------------------------------------------------
-#  Chat Endpoint
+#  /chat
 # -----------------------------------------------------------
 @app.route("/chat", methods=["POST"])
 def chat():
     """
     Chat with DuooBot
     ---
-    description: Send a message to DuooBot and receive a structured reply
+    post:
+      summary: Send a user message and receive DuooBot's structured reply
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: ChatBody
+      responses:
+        200:
+          description: Successful bot reply (JSON)
     """
     try:
         data = request.get_json(force=True)
@@ -83,123 +107,118 @@ def chat():
         return jsonify({"error": f"Invalid JSON: {err}"}), 400
 
     text = (data.get("text") or "").strip()
-    user_uid = (data.get("uid") or "").strip()
-    display_name = (data.get("displayName") or "").strip()
+    uid = (data.get("uid") or "").strip() or f"guest_{uuid.uuid4().hex[:8]}"
+    name = (data.get("displayName") or "").strip() or "Guest"
 
     if not text:
         return jsonify({"reply": {"text": "Please send some text!"}}), 400
 
-    # Assign guest ID if none
-    if not user_uid:
-        user_uid = f"guest_{uuid.uuid4().hex[:8]}"
+    convo = sessions.get(uid) or Conversation(user_name=name)
+    sessions[uid] = convo
+    prune_sessions()
 
-    # Retrieve or create a conversation
-    convo = sessions.get(user_uid)
-    if convo is None:
-        convo = Conversation(user_name=display_name or "Guest")
-        sessions[user_uid] = convo
-        prune_sessions()
-
-    # Generate reply
     try:
         reply_payload = convo.reply(text)
         if isinstance(reply_payload, str):
             reply_payload = {"text": reply_payload}
     except Exception as err:
-        print(f"❌  Error during conversation for {user_uid}: {err}")
-        reply_payload = {
-            "text": "⚠️ Sorry, something went wrong on the server. Please try again."
-        }
+        print(f"❌ Error for {uid}: {err}")
+        reply_payload = {"text": "⚠️ Server error."}
 
-    # Save state
-    sessions[user_uid] = convo
     save_state_to_file()
-
-    return jsonify(
-        {"reply": reply_payload, "context": convo.state, "user": user_uid}
-    )
-
+    return jsonify({"reply": reply_payload, "context": convo.state, "user": uid})
 
 # -----------------------------------------------------------
-#  Reset conversation endpoint (frontend “delete chat” button)
+#  /reset
 # -----------------------------------------------------------
 @app.route("/reset", methods=["POST"])
 def reset_conversation():
-    """Clears an in‑memory + cached conversation for a given UID"""
+    """
+    Reset a user's session
+    ---
+    post:
+      summary: Clear a user’s saved conversation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: ResetBody
+      responses:
+        200:
+          description: Reset confirmation
+    """
     try:
         data = request.get_json(force=True)
-        user_uid = (data.get("uid") or "").strip()
-        if not user_uid:
+        uid = (data.get("uid") or "").strip()
+        if not uid:
             return jsonify({"error": "Missing uid"}), 400
-
-        if user_uid in sessions:
-            del sessions[user_uid]
-            save_state_to_file()
-            print(f"🗑️  Conversation reset for user {user_uid}")
-
-        return jsonify(
-            {"status": "reset", "message": "Conversation cleared successfully"}
-        )
+        sessions.pop(uid, None)
+        save_state_to_file()
+        print(f"🗑️ Conversation reset for user {uid}")
+        return jsonify({"status": "reset", "message": "Conversation cleared successfully"})
     except Exception as err:
-        print(f"❌  Error during conversation reset: {err}")
+        print(f"❌ Reset error: {err}")
         return jsonify({"error": str(err)}), 500
 
-
 # -----------------------------------------------------------
-#  Domain Availability API (local DNS‑based check)
+#  /domaincheck
 # -----------------------------------------------------------
-@app.route("/domaincheck", methods=["GET"])
+@app.route("/domaincheck", methods=["POST"])
 def domain_check():
     """
-    Free, unlimited domain availability checker using DNS lookups.
-    Example: /domaincheck?domain=duobits
-    Returns JSON with availability across common TLDs.
+    Domain Availability Check
+    ---
+    post:
+      summary: Check whether given domain TLDs are available
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: DomainBody
+      responses:
+        200:
+          description: Availability results array
     """
-    base = (request.args.get("domain") or "").strip().lower()
-    if not base:
-        return jsonify({"error": "Missing ?domain=example"}), 400
+    try:
+        data = request.get_json(force=True)
+        base = (data.get("domain") or "").strip().lower()
+        tlds = data.get("tlds") or [".com", ".in", ".net", ".org", ".co"]
+        if not base:
+            return jsonify({"error": "Missing domain parameter"}), 400
 
-    # Limit to a small list for faster responses
-    tlds = [".com", ".in", ".net", ".org", ".co"]
-    results = []
-
-    # Set short DNS timeout for faster responsiveness
-    socket.setdefaulttimeout(2)
-
-    for tld in tlds:
-        name = f"{base}{tld}"
-        try:
-            socket.gethostbyname(name)
-            available = False
-        except socket.gaierror:
-            available = True
-        results.append({"tld": tld, "domain": name, "available": available})
-
-    return jsonify({"base": base, "domains": results})
-
+        socket.setdefaulttimeout(2)
+        results = []
+        for tld in tlds:
+            name = f"{base}{tld}"
+            try:
+                socket.gethostbyname(name)
+                available = False
+            except socket.gaierror:
+                available = True
+            results.append({"tld": tld, "domain": name, "available": available})
+        return jsonify({"base": base, "domains": results})
+    except Exception as err:
+        print("❌ Domain check error:", err)
+        return jsonify({"error": str(err)}), 500
 
 # -----------------------------------------------------------
-#  Health‑check endpoint (Render uptime pinger)
+#  /health
 # -----------------------------------------------------------
 @app.route("/health", methods=["GET"])
 def health():
+    """DB connectivity check"""
     try:
-        # simple DB ping keeps SQLite file unlocked
         s = SessionLocal()
-        s.execute(sql_text("SELECT 1"))
+        s.execute(text("SELECT 1"))
         s.close()
     except Exception as err:
-        print(f"⚠️  Healthcheck DB ping failed: {err}")
+        print("⚠️ Healthcheck DB ping failed:", err)
     return jsonify({"status": "ok"}), 200
-
 
 # -----------------------------------------------------------
 #  Run locally or on Render
 # -----------------------------------------------------------
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
-    print(
-        f"🚀  DuooBot running on 0.0.0.0:{port} — Swagger UI → /apidocs\n"
-        "💾  Memory‑safe mode active (Render Free Tier)"
-    )
+    print(f"🚀 DuooBot running at http://127.0.0.1:{port}/apidocs — Swagger UI ready.")
     app.run(host="0.0.0.0", port=port, debug=False)
