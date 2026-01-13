@@ -1,5 +1,5 @@
 # ----------------------------------------------------------
-#  DuooBot — Conversational Logic v3 (clean unified flow)
+#  DuooBot — Conversational Logic v4 (context‑aware smart flow)
 # ----------------------------------------------------------
 import socket
 import re
@@ -69,7 +69,7 @@ ERRORS = [
 ]
 
 # ----------------------------------------------------------
-#  Conversation Core (v3)
+#  Conversation Core (v4)
 # ----------------------------------------------------------
 class Conversation:
     def __init__(self, state=None, user_name=None):
@@ -78,8 +78,6 @@ class Conversation:
             self.state["name"] = user_name.split(" ")[0]
         self.state.setdefault("history", [])
 
-    # ------------------------------------------------------
-    #  Main linear flow for all project types
     # ------------------------------------------------------
     def reply(self, text: str):
         step = self.state.get("step", "greeting")
@@ -100,18 +98,37 @@ class Conversation:
         elif step == "project_type":
             cat = detect_category(low)
             self.state["project"] = cat
+            self.state["step"] = "audience"
+            return {
+                "text": "Great! Could you tell me who this project is mainly for — your customers, internal team, or a specific market?",
+                "options": [],
+            }
+
+        # 3️⃣ Audience context
+        elif step == "audience":
+            self.state["audience"] = text
+            self.state["step"] = "goal"
+            return {
+                "text": "Good to know 👌 And what’s your main goal with this project — sales, leads, branding, or automation?",
+                "options": ["Sales", "Leads", "Branding", "Automation", "Other"],
+            }
+
+        # 4️⃣ Goal context
+        elif step == "goal":
+            self.state["goal"] = text
             self.state["step"] = "features"
 
-            if cat == "website":
+            proj = self.state.get("project", "")
+            if proj == "website":
                 msg = "Nice! What type of website are you planning?"
                 opts = ["Landing Page", "Portfolio", "E‑Commerce", "Corporate"]
-            elif cat == "app":
+            elif proj == "app":
                 msg = "Awesome! Which core features should your app include?"
                 opts = ["Login", "Payments", "AI", "Dashboard"]
-            elif cat == "bot":
+            elif proj == "bot":
                 msg = "Bots are fun 🤖 What should it do for your business?"
                 opts = ["Chat", "Automation", "Support", "Integration"]
-            elif cat == "automation":
+            elif proj == "automation":
                 msg = "Great! What processes do you want automated?"
                 opts = ["Reports", "APIs", "Workflows", "Data Entry"]
             else:
@@ -120,7 +137,7 @@ class Conversation:
 
             return {"text": msg, "options": opts}
 
-        # 3️⃣ Features
+        # 5️⃣ Features
         elif step == "features":
             feats = [x.strip() for x in text.replace(" and ", ",").split(",") if x.strip()]
             self.state["features"] = feats
@@ -132,36 +149,53 @@ class Conversation:
                 "options": ["< 10 000", "10 – 30 k", "30 k +"],
             }
 
-        # 4️⃣ Budget
+        # 6️⃣ Budget (context aware)
         elif step == "budget":
             self.state["budget"] = text
             self.state["step"] = "assets"
+
+            budget_text = text.replace(" ", "").lower()
+            if "<" in budget_text or "10" in budget_text:
+                msg = "We'll focus on essential features to keep it efficient and cost‑friendly."
+            elif "30" in budget_text:
+                msg = "Nice, that gives flexibility to include quality design and smoother UX."
+            else:
+                msg = "Perfect! We'll tailor high‑end performance and branding for you."
             return {
-                "text": "Do you already have a logo or other branding assets?",
+                "text": f"{msg}\nDo you already have a logo or other branding assets?",
                 "options": ["Yes", "No"],
             }
 
-        # 5️⃣ Assets
+        # 7️⃣ Assets / Branding
         elif step == "assets":
-            self.state["has_logo"] = detect_yes_no(low) == "yes"
+            yn = detect_yes_no(low)
+            self.state["has_logo"] = yn == "yes"
             self.state["has_social"] = self.state["has_logo"]
+            self.state["needs_design"] = yn == "no"
             self.state["step"] = "timeline"
+            note = ""
+            if yn == "no":
+                note = "\nNo worries — our creative team can help design your logo too."
             return {
-                "text": "When are you hoping to launch your project?",
+                "text": f"When are you hoping to launch your project?{note}",
                 "options": ["1‑2 Weeks", "1 Month", "Flexible"],
             }
 
-        # 6️⃣ Timeline
+        # 8️⃣ Timeline
         elif step == "timeline":
             self.state["timeline"] = text
             self.state["urgent"] = "week" in low or "soon" in low
             self.state["step"] = "domain"
+            if self.state["urgent"]:
+                extra = "Got it 🚀 We'll treat this as a priority build."
+            else:
+                extra = "Perfect timing — we can plan a steady rollout."
             return {
-                "text": "Do you already own a domain name?",
+                "text": f"{extra}\nDo you already own a domain name?",
                 "options": ["Yes", "No"],
             }
 
-        # 7️⃣ Domain
+        # 9️⃣ Domain
         elif step == "domain":
             ans = detect_yes_no(low)
             self.state["has_domain"] = ans == "yes"
@@ -173,7 +207,7 @@ class Conversation:
                 "options": ["Yes"],
             }
 
-        # 8️⃣ Summary / Quote
+        # 🔟 Summary / Quote
         elif step == "summary":
             cost = self.estimate_price_inr()
             summary = self.project_summary(cost)
@@ -182,7 +216,7 @@ class Conversation:
             return {
                 "text": (
                     f"{summary}\n💸 Estimated cost ≈ ₹ {cost:,}\n"
-                    "Thanks for sharing your requirements!\n"
+                    "Thanks for sharing such detailed info! "
                     "Type 'Start New Project' to begin again."
                 ),
                 "options": ["Start New Project"],
@@ -194,7 +228,7 @@ class Conversation:
                 name = self.state.get("name")
                 self.state = {"step": "greeting", "name": name, "history": []}
                 return self.reply("hello")
-            return {"text": "Type 'Start New Project' to begin again 🎯", "options": []}
+            return {"text": "Type 'Start New Project' to begin again 🎯"}
 
         # fallback safeguard
         return {"text": random.choice(ERRORS), "options": []}
@@ -248,9 +282,18 @@ class Conversation:
         if domain:
             mark = "✅" if self.state.get("domain_available") else "❌"
             tag = f" | Domain {mark} {domain}"
+        parts = []
+        if self.state.get("audience"):
+            parts.append(f"Audience: {self.state['audience']}")
+        if self.state.get("goal"):
+            parts.append(f"Goal: {self.state['goal']}")
+        if self.state.get("needs_design"):
+            parts.append("Includes logo/branding design")
+        context = "\n— ".join(parts)
         return (
             f"📋 Summary for {self.state.get('name', 'Client')}: "
-            f"{self.state.get('project', 'project')} project ≈ ₹ {total:,} INR{tag}"
+            f"{self.state.get('project', 'project')} project ≈ ₹ {total:,} INR{tag}\n"
+            f"— {context if context else ''}"
         )
 
     def save_lead_to_db(self):
